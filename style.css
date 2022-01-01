@@ -7,6 +7,10 @@ body {
   overflow-y: hidden;
   margin: 0 1em;
   background-color: #000957;
+  background-image:
+    url("assets/puyo_puyo_background.jpg");
+  background-position: top center;
+
   color: white;
   font-family: Consolas, "Lucida Console", "Courier New";
   font-variant: small-caps;

@@ -516,7 +516,7 @@ const GameLogic = (function () {
         this.letFall(b);
       }
 
-      this.audioPlayer.playClip('land');
+      //this.audioPlayer.playClip('land');
       this.state = GameLogic.STATE_RESOLVING;
 
       this.timeHandler.addTask({
