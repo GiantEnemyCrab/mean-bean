@@ -7,6 +7,46 @@
     "spriteY": 64
   }, {
     "type": "audio",
+    "name": "move",
+    "url": "assets/move.ogg"
+  }, {
+    "type": "audio",
+    "name": "rotate",
+    "url": "assets/rotate.ogg"
+  }, {
+    "type": "audio",
+    "name": "land",
+    "url": "assets/land.ogg"
+  }, {
+    "type": "audio",
+    "name": "chain0",
+    "url": "assets/chain0.ogg"
+  }, {
+    "type": "audio",
+    "name": "chain1",
+    "url": "assets/chain1.ogg"
+  }, {
+    "type": "audio",
+    "name": "chain2",
+    "url": "assets/chain2.ogg"
+  }, {
+    "type": "audio",
+    "name": "chain3",
+    "url": "assets/chain3.ogg"
+  }, {
+    "type": "audio",
+    "name": "chain4",
+    "url": "assets/chain4.ogg"
+  }, {
+    "type": "audio",
+    "name": "chain5",
+    "url": "assets/chain5.ogg"
+  }, {
+    "type": "audio",
+    "name": "chain6",
+    "url": "assets/chain6.ogg"
+  }, {
+    "type": "audio",
     "name": "yepee1",
     "url": "assets/yepee1.ogg"
   }, {

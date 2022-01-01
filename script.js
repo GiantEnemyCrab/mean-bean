@@ -15,27 +15,34 @@ const GRID_PITCH  = 24;
 const DROP_X = Math.floor((GRID_WIDTH - 1) / 2);
 const DROP_Y = 0;
 
-const ROTATION_TABLE = {};
-ROTATION_TABLE[UP] = {};
-ROTATION_TABLE[LEFT] = {};
-ROTATION_TABLE[DOWN] = {};
-ROTATION_TABLE[RIGHT] = {};
-ROTATION_TABLE[UP][CCW]    = { x: -1, y: +1, orientation: LEFT  };
-ROTATION_TABLE[UP][CW]     = { x: +1, y: +1, orientation: RIGHT };
-ROTATION_TABLE[LEFT][CCW]  = { x: +1, y: +1, orientation: DOWN  };
-ROTATION_TABLE[LEFT][CW]   = { x: +1, y: -1, orientation: UP    };
-ROTATION_TABLE[DOWN][CCW]  = { x: +1, y: -1, orientation: RIGHT };
-ROTATION_TABLE[DOWN][CW]   = { x: -1, y: -1, orientation: LEFT  };
-ROTATION_TABLE[RIGHT][CCW] = { x: -1, y: -1, orientation: UP    };
-ROTATION_TABLE[RIGHT][CW]  = { x: -1, y: +1, orientation: DOWN  };
+const ROTATION_TABLE = Object.freeze({
+  [UP]: {
+    [CCW] : { x: -1, y: +1, orientation: LEFT  },
+    [CW]  : { x: +1, y: +1, orientation: RIGHT },
+  },
+  [LEFT]: {
+    [CCW] : { x: +1, y: +1, orientation: DOWN  },
+    [CW]  : { x: +1, y: -1, orientation: UP    },
+  },
+  [DOWN]: {
+    [CCW] : { x: +1, y: -1, orientation: RIGHT },
+    [CW]  : { x: -1, y: -1, orientation: LEFT  },
+  },
+  [RIGHT]: {
+    [CCW] : { x: -1, y: -1, orientation: UP    },
+    [CW]  : { x: -1, y: +1, orientation: DOWN  },
+  },
+});
 
 const EVENT_NAMESPACE = 'MeanBean';
+
+const ONE_FRAME = 1000 / 60;
 
 // Bean ////////////////////////////////////////////////////////////////
 
 const Bean = (function () {
-  var Bean = Object.create(null);
-  var lastId = -1;
+  let Bean = Object.create(null);
+  let lastId = -1;
 
   Object.defineProperties(Bean, {
     'COLORS': {
@@ -53,6 +60,26 @@ const Bean = (function () {
     'BOND_UP'    : { enumerable: true, value: 2 },
     'BOND_RIGHT' : { enumerable: true, value: 4 },
     'BOND_LEFT'  : { enumerable: true, value: 8 },
+
+    'STATE_STATIC'    : { enumerable: true, value: Symbol('static')     },
+    'STATE_LEADING'   : { enumerable: true, value: Symbol('leading')    },
+    'STATE_WOBBLING_H': { enumerable: true, value: Symbol('wobbling_h') },
+    'STATE_WOBBLING_V': { enumerable: true, value: Symbol('wobbling_v') },
+    'STATE_POPPING'   : { enumerable: true, value: Symbol('exploding')  },
+    'STATE_INVISIBLE' : { enumerable: true, value: Symbol('invisible')  },
+  });
+
+  Object.defineProperties(Bean, {
+    'SPRITE_OFFSETS': {
+      enumerable: true,
+      value: Object.freeze({
+        [Bean.STATE_STATIC]     : -1,
+        [Bean.STATE_WOBBLING_H] : 16,
+        [Bean.STATE_WOBBLING_V] : 17,
+        [Bean.STATE_LEADING]    : 18,
+        [Bean.STATE_POPPING]    : 20,
+      })
+    },
   });
 
   Bean.proto = {
@@ -64,6 +91,7 @@ const Bean = (function () {
     displayY: NaN,
     group: null,
     bonds: Bean.BOND_NONE,
+    visualState: Bean.STATE_STATIC,
     isRemoved: false,
     player: null,
 
@@ -78,8 +106,8 @@ const Bean = (function () {
     },
 
     normalizeDisplayPosition: function normalizeDisplayPosition() {
-      this.displayX = DISPLAY_OFFSETS[this.player].x + this.logicalX * GRID_PITCH;
-      this.displayY = DISPLAY_OFFSETS[this.player].y + this.logicalY * GRID_PITCH;
+      this.displayX = Display.OFFSETS[this.player].x + this.logicalX * GRID_PITCH;
+      this.displayY = Display.OFFSETS[this.player].y + this.logicalY * GRID_PITCH;
     },
 
     toString: function toString() {
@@ -90,14 +118,14 @@ const Bean = (function () {
   };
 
   Bean.create = function createBean(color) {
-    var bean = Object.create(Bean.proto);
+    let bean = Object.create(Bean.proto);
 
     // temp
     bean.player = GameLogic.PLAYER;
 
     bean.id = ++lastId;
 
-    color = color || BEAN_COLORS[0];
+    color = color || Bean.COLORS[0];
     bean.color = color;
 
     // console.log('bean created: %s', bean);
@@ -111,7 +139,7 @@ const Bean = (function () {
 // Pair ////////////////////////////////////////////////////////////////
 
 const Pair = (function () {
-  var Pair = Object.create(null);
+  let Pair = Object.create(null);
 
   Pair.proto = {
     beanA: null,
@@ -120,7 +148,7 @@ const Pair = (function () {
   };
 
   Pair.create = function createPair(beanA, beanB) {
-    var pair = Object.create(Pair.proto);
+    let pair = Object.create(Pair.proto);
     // console.log('pair created (%s, %s)', beanA, beanB);
 
     pair.beanA = beanA;
@@ -135,8 +163,8 @@ const Pair = (function () {
 // Group ///////////////////////////////////////////////////////////////
 
 const Group = (function () {
-  var Group = Object.create(null);
-  var lastId = -1;
+  let Group = Object.create(null);
+  let lastId = -1;
 
   Group.proto = {
     beans: null,
@@ -145,11 +173,9 @@ const Group = (function () {
     toBeRemoved: false,
 
     checkConsistency: function checkConsistency() {
-      var thisGroup = this;
-      if (!this.beans.every(function (bean) {
-        return bean.group === thisGroup;
-      })) {
-        throw new Error('inconsistent group %s', this);
+      let thisGroup = this;
+      if (!this.beans.every((bean) => bean.group === thisGroup)) {
+        throw new Error(`inconsistent group ${this}`);
       }
     },
 
@@ -171,8 +197,9 @@ const Group = (function () {
 
     removeBean: function removeBean(bean) {
       this.checkConsistency();
-      console.assert(this.containsBean(bean),
-                     'bean %s not in group %s', bean, this);
+      if (!this.containsBean(bean)) {
+        throw new Error(`bean ${bean} not in group ${this}`);
+      }
       this.beans.splice(this.beans.indexOf(bean), 1);
       bean.group = null;
       bean.bonds = Bean.BOND_NONE;
@@ -196,17 +223,18 @@ const Group = (function () {
     },
 
     updateBonds: function updateBonds() {
-      var list = this.beans.slice();
-      list.forEach(function (bean) {
+      let list = this.beans.slice();
+      for (let bean of list) {
         bean.bonds = Bean.BOND_NONE;
-      });
+      }
+
       while (list.length > 1) {
-        var beanA = list.pop();
-        var ax = beanA.logicalX;
-        var ay = beanA.logicalY;
-        list.forEach(function (beanB) {
-          var bx = beanB.logicalX;
-          var by = beanB.logicalY;
+        let beanA = list.pop();
+        let ax = beanA.logicalX;
+        let ay = beanA.logicalY;
+        for (let beanB of list) {
+          let bx = beanB.logicalX;
+          let by = beanB.logicalY;
           if (ax === bx) {
             if (+1 === ay - by) {
               beanA.bonds |= Bean.BOND_UP;
@@ -227,32 +255,34 @@ const Group = (function () {
               beanB.bonds |= Bean.BOND_LEFT;
             }
           }
-        });
+        }
       }
     },
 
     toString: function toString() {
-      return 'Group{#' + this.id + ' ' + this.color +
-        '[' + this.beans.length +']}' +
+      return `Group{#${this.id} ${this.color} [${this.beans.length}]}` +
         (this.beans.length ?
-          (' [ ' + this.beans.map(function (bean) {
-            return '#' + bean.id;
-          }).join(', ') + ' ]') :
+          (` [ ${ this.beans.map((bean) => `#${bean.id}`).join(', ') } ]`) :
           '');
     }
   };
 
-  Group.create = function createGroup(bean) {
-    var group = Object.create(Group.proto);
+  Group.create = function createGroup(...beans) {
+    let group = Object.create(Group.proto);
 
-    if (!bean) throw new Error('you may not create an empty group');
+    if (!beans.length) {
+      throw new Error('you may not create an empty group');
+    }
     group.id = ++lastId;
 
     group.beans = [];
-    Array.slice(arguments).forEach(function (bean) {
+    group.color = beans[0].color;
+    for (let bean of beans) {
+      if (bean.color !== group.color) {
+        throw new Error('bean color doesn’t match group’s');
+      }
       group.addBean(bean);
-    });
-    group.color = bean.color;
+    }
 
     console.log('group created: %s', group);
     return group;
@@ -264,11 +294,17 @@ const Group = (function () {
 // GameLogic ///////////////////////////////////////////////////////////
 
 const GameLogic = (function () {
-  var GameLogic = Object.create(null);
+  let GameLogic = Object.create(null);
 
   Object.defineProperties(GameLogic, {
     'PLAYER'   : { enumerable: true, value: Symbol('player')   },
     'OPPONENT' : { enumerable: true, value: Symbol('opponent') },
+
+    'STATE_UNINITIALIZED' : { enumerable: true, value: Symbol('uninitialized') },
+    'STATE_INTERACTIVE'   : { enumerable: true, value: Symbol('interactive')   },
+    'STATE_RESOLVING'     : { enumerable: true, value: Symbol('resolving')     },
+    'STATE_GAME_OVER'     : { enumerable: true, value: Symbol('game over')     },
+    'STATE_PAUSED'        : { enumerable: true, value: Symbol('paused')        },
   });
 
   GameLogic.proto = {
@@ -276,24 +312,21 @@ const GameLogic = (function () {
     nextPair: null,
     beans: null,
     display: null,
+    audioPlayer: null,
     server: null,
+    timeHandler: null,
     score: null,
-    mainTimer: NaN,
-    playerHasControl: false,
+    state: GameLogic.STATE_UNINITIALIZED,
 
-    start: function start() {
-      this.playerHasControl = true;
+    init: function init() {
+      this.state = GameLogic.STATE_INTERACTIVE;
       this.drop();
+    },
 
-      var thisGameLogic = this;
-      this.mainTimer = setInterval(function () {
-        try {
-          if (thisGameLogic.playerHasControl) thisGameLogic.move(DOWN);
-        } catch (err) {
-          clearInterval(thisGameLogic.mainTimer);
-          throw err;
-        }
-      }, 1000);
+    tick: function tick(time) {
+      if (GameLogic.STATE_INTERACTIVE === this.state) {
+        this.move(DOWN);
+      }
     },
 
     drop: function drop() {
@@ -301,27 +334,23 @@ const GameLogic = (function () {
         this.gameOver();
         return;
       }
-      for (var i = 0; i < 6; i++) {
-        if (this.beans[i][-1] || this.beans[i][-2]) {
+      for (let i = 0; i < 6; i++) {
+        if (this.beans[i][-2]) {
           this.gameOver();
           return;
         }
       }
 
-      var pair = this.getNextPair();
+      let pair = this.getNextPair();
       console.log('=== new round: %s %s ===', pair.beanA, pair.beanB);
-      /*
-      offset =
-        player:   ( GRID_PITCH * 1,  GRID_PITCH * 1 )
-        opponent: ( GRID_PITCH * 13, GRID_PITCH * 1 )
-      */
+
       pair.beanA.moveTo(DROP_X, DROP_Y - 1);
       pair.beanB.moveTo(DROP_X, DROP_Y - 2);
       pair.beanA.normalizeDisplayPosition();
       pair.beanB.normalizeDisplayPosition();
       pair.orientation = UP;
       this.currentPair = pair;
-
+      pair.beanA.visualState = Bean.STATE_LEADING;
     },
 
     getNextPair: function getNextPair() {
@@ -330,7 +359,7 @@ const GameLogic = (function () {
         this.setPreviewPair(this.nextPair);
       }
 
-      var pair = this.nextPair;
+      let pair = this.nextPair;
       this.nextPair = this.server.requestPair();
       this.setPreviewPair(this.nextPair);
       return pair;
@@ -344,20 +373,21 @@ const GameLogic = (function () {
     },
 
     move: function move(dir) {
-      var pair = this.currentPair;
-      var ori = pair.orientation;
-      var a = pair.beanA;
-      var b = pair.beanB;
+      let pair = this.currentPair;
+      let ori = pair.orientation;
+      let a = pair.beanA;
+      let b = pair.beanB;
 
-      var ax = a.logicalX;
-      var bx = b.logicalX;
-      var ay = a.logicalY;
-      var by = b.logicalY;
+      let ax = a.logicalX;
+      let bx = b.logicalX;
+      let ay = a.logicalY;
+      let by = b.logicalY;
 
       this.beans[ax][ay] = null;
       this.beans[bx][by] = null;
 
-      var pushFlag = false;
+      let pushFlag = false;
+      let playClipFlag = false;
 
       switch (dir) {
         case LEFT:
@@ -368,6 +398,7 @@ const GameLogic = (function () {
           )) {
             a.logicalX = ax - 1;
             b.logicalX = bx - 1;
+            playClipFlag = true;
           }
           break;
 
@@ -379,6 +410,7 @@ const GameLogic = (function () {
           )) {
             a.logicalX = ax + 1;
             b.logicalX = bx + 1;
+            playClipFlag = true;
           }
           break;
 
@@ -390,12 +422,15 @@ const GameLogic = (function () {
           )) {
             a.logicalY = ay + 1;
             b.logicalY = by + 1;
+            playClipFlag = true;
           }
           else {
             pushFlag = true;
           }
           break;
       }
+
+      //if (playClipFlag) this.audioPlayer.playClip('move');
 
       a.normalizeDisplayPosition();
       b.normalizeDisplayPosition();
@@ -405,53 +440,57 @@ const GameLogic = (function () {
     },
 
     rotate: function rotate(dir) {
-      var pair = this.currentPair;
-      var a = pair.beanA;
-      var b = pair.beanB;
+      let pair = this.currentPair;
+      let a = pair.beanA;
+      let b = pair.beanB;
 
-      var ax = a.logicalX;
-      var bx = b.logicalX;
-      var ay = a.logicalY;
-      var by = b.logicalY;
+      let ax = a.logicalX;
+      let bx = b.logicalX;
+      let ay = a.logicalY;
+      let by = b.logicalY;
 
       this.beans[ax][ay] = null;
       this.beans[bx][by] = null;
 
-      var coordChange = ROTATION_TABLE[pair.orientation][dir];
+      let coordChange = ROTATION_TABLE[pair.orientation][dir];
 
-      var newX = bx + coordChange.x;
-      var newY = by + coordChange.y;
+      let newBx = bx + coordChange.x;
+      let newBy = by + coordChange.y;
 
-      if (newX >= 0 && newX < GRID_WIDTH && newY < GRID_HEIGHT &&
-          !this.beans[newX][newY]) {
+      if (newBx >= 0 && newBx < GRID_WIDTH && newBy < GRID_HEIGHT &&
+          !this.beans[newBx][newBy]) {
         // normal case
-        b.logicalX = newX;
-        b.logicalY = newY;
+        b.logicalX = newBx;
+        b.logicalY = newBy;
         pair.orientation = coordChange.orientation;
+        this.audioPlayer.playClip('rotate');
       }
 
       else {
-        // shift case
-        var coordShift = {};
+        // kick case
+        let kickShift = {};
         if (DOWN === coordChange.orientation ||
             UP === coordChange.orientation) {
-          coordShift.x = 0;
-          coordShift.y = -coordChange.y;
+          // floor kick
+          kickShift.x = 0;
+          kickShift.y = -coordChange.y;
         }
         else {
-          coordShift.x = -coordChange.x;
-          coordShift.y = 0;
+          // wall kick
+          kickShift.x = -coordChange.x;
+          kickShift.y = 0;
         }
-        newX = ax + coordShift.x;
-        newY = ay + coordShift.y;
+        newBx = ax + kickShift.x;
+        newBy = ay + kickShift.y;
 
-        if (newX >= 0 && newX < GRID_WIDTH && newY < GRID_HEIGHT &&
-            !this.beans[newX][newY]) {
+        if (newBx >= 0 && newBx < GRID_WIDTH && newBy < GRID_HEIGHT &&
+            !this.beans[newBx][newBy]) {
           b.logicalX = ax;
           b.logicalY = ay;
-          a.logicalX = newX;
-          a.logicalY = newY;
+          a.logicalX = newBx;
+          a.logicalY = newBy;
           pair.orientation = coordChange.orientation;
+          this.audioPlayer.playClip('rotate');
         }
       }
 
@@ -462,13 +501,13 @@ const GameLogic = (function () {
     },
 
     pushDown: function pushDown(pair) {
-      var a = pair.beanA;
-      var b = pair.beanB;
+      let a = pair.beanA;
+      let b = pair.beanB;
 
-      var ax = a.logicalX;
-      var bx = b.logicalX;
-      var ay = a.logicalY;
-      var by = b.logicalY;
+      let ax = a.logicalX;
+      let bx = b.logicalX;
+      let ay = a.logicalY;
+      let by = b.logicalY;
 
       if (ay < GRID_HEIGHT - 1 && !this.beans[ax][ay + 1]) {
         this.letFall(a);
@@ -477,18 +516,25 @@ const GameLogic = (function () {
         this.letFall(b);
       }
 
-      this.resolve();
+      this.audioPlayer.playClip('land');
+      this.state = GameLogic.STATE_RESOLVING;
+
+      this.timeHandler.addTask({
+        mode: TimeHandler.MODE_TIMEOUT,
+        delay: 20 * ONE_FRAME,
+        callback: () => { this.resolve(); },
+      });
     },
 
     letFall: function letFall(bean) {
       // console.log('letting fall %s (at least)', bean);
-      var x = bean.logicalX;
-      var y = bean.logicalY;
-      var oldY = y;
+      let x = bean.logicalX;
+      let y = bean.logicalY;
+      let oldY = y;
       while (y < GRID_HEIGHT - 1 && !this.beans[x][y + 1]) y++;
-      var fallHeight = y - oldY;
+      let fallHeight = y - oldY;
 
-      var beanToFall = bean;
+      let beanToFall = bean;
       do {
         if (beanToFall.group) beanToFall.group.removeBean(beanToFall);
         oldY = beanToFall.logicalY;
@@ -501,17 +547,19 @@ const GameLogic = (function () {
     },
 
     resolve: function resolve(chainLevel) {
-      this.playerHasControl = false;
+      this.state = GameLogic.STATE_RESOLVING;
+      this.currentPair.beanA.visualState = Bean.STATE_STATIC;
       this.dump();
 
       chainLevel = chainLevel || 0;
 
-      var i, bean, group, adjacentBeans, lastGroup,
-        j = GRID_HEIGHT,
-        allGroups = [],
-        groupsToRemove = [],
-        hoveringBeans = [],
-        logic = this;
+      let i, bean, group, adjacentBeans, lastGroup;
+      let j = GRID_HEIGHT;
+      let allGroups = [];
+      let groupsToRemove = [];
+      let hoveringBeans = [];
+      let logic = this;
+      let timeHandler = logic.timeHandler;
 
       // iterating backwards
       while (j--) for (i = GRID_WIDTH; i--; ) {
@@ -522,9 +570,8 @@ const GameLogic = (function () {
           if (i > 0) adjacentBeans.push(this.beans[i - 1][j]);
           if (j > 0) adjacentBeans.push(this.beans[i][j - 1]);
 
-          adjacentBeans.forEach(function (adj) {
-            if (!adj) return;
-            if (adj.color === bean.color) {
+          for (let adj of adjacentBeans) {
+            if (adj && adj.color === bean.color) {
               if (adj.group && bean.group) {
                 if (adj.group !== bean.group) {
                   bean.group.forEachBean(function (otherBean) {
@@ -545,62 +592,108 @@ const GameLogic = (function () {
                 group = Group.create(bean, adj);
               }
             }
-          });
+          }
 
           if (group && !allGroups.includes(group)) allGroups.push(group);
         }
       }
 
-      allGroups.forEach(function (group) {
+      for (let group of allGroups) {
         if (group.getLength() >= 4) {
           groupsToRemove.push(group);
         }
-      });
+      }
 
       if (groupsToRemove.length) {
-        setTimeout(function () {
-          console.log('- groups will be removed now');
-          var hoveringBeans = [];
+        const setStateInvisible = (bean) => bean.visualState = Bean.STATE_INVISIBLE;
+        const setStateStatic    = (bean) => bean.visualState = Bean.STATE_STATIC;
+        const setStatePopping   = (bean) => bean.visualState = Bean.STATE_POPPING;
 
-          groupsToRemove.forEach(function (group) {
-            logic.removeGroup(group);
-            group.forEachBean(function (bean) {
-              if (bean.logicalY <= 0) return;
-              var beanOnTop = logic.beans[bean.logicalX][bean.logicalY - 1];
-              if (beanOnTop &&
-                  beanOnTop.group !== bean.group &&
-                  !beanOnTop.isRemoved) {
-                hoveringBeans.push(beanOnTop);
+        for (let n = 5; n < 27; n += 2) {
+          timeHandler.addTask({
+            mode: TimeHandler.MODE_TIMEOUT,
+            delay: n * ONE_FRAME,
+            callback: () => {
+              for (let group of groupsToRemove) {
+                group.forEachBean(setStateInvisible);
               }
-            });
+            },
           });
 
-          if (hoveringBeans.length) {
-            setTimeout(function () {
-              console.log('-- beans will fall now');
-              hoveringBeans.forEach(function (bean) {
-                if (!bean.isRemoved) logic.letFall(bean);
+          timeHandler.addTask({
+            mode: TimeHandler.MODE_TIMEOUT,
+            delay: (n + 1) * ONE_FRAME,
+            callback: () => {
+              for (let group of groupsToRemove) {
+                group.forEachBean(setStateStatic);
+              }
+            },
+          });
+        }
+
+        timeHandler.addTask({
+          mode: TimeHandler.MODE_TIMEOUT,
+          delay: 29 * ONE_FRAME,
+          callback: () => {
+            this.audioPlayer.playClip('chain' + chainLevel);
+            for (let group of groupsToRemove) {
+              group.forEachBean(setStatePopping);
+            }
+          },
+        });
+
+        timeHandler.addTask({
+          mode: TimeHandler.MODE_TIMEOUT,
+          delay: 60 * ONE_FRAME,
+          callback: () => {
+            console.log('- groups will be removed now');
+            let hoveringBeans = [];
+
+            for (let group of groupsToRemove) {
+              logic.removeGroup(group);
+              group.forEachBean((bean) => {
+                if (bean.logicalY > 0) {
+                  let beanOnTop = logic.beans[bean.logicalX][bean.logicalY - 1];
+                  if (beanOnTop &&
+                      beanOnTop.group !== bean.group &&
+                      !beanOnTop.isRemoved) {
+                    hoveringBeans.push(beanOnTop);
+                  }
+                }
               });
-              logic.resolve(chainLevel + 1);
-            }, 350);
-          }
-          else {
-            console.log('-- no hovering beans, end');
-            logic.playerHasControl = true;
-            logic.drop();
-          }
-        }, 700);
+            }
+
+            if (hoveringBeans.length) {
+              timeHandler.addTask({
+                mode: TimeHandler.MODE_TIMEOUT,
+                delay: 350,
+                callback: () => {
+                  console.log('-- beans will fall now');
+                  for (let bean of hoveringBeans) {
+                    if (!bean.isRemoved) logic.letFall(bean);
+                  }
+                  logic.resolve(chainLevel + 1);
+                },
+              });
+            }
+            else {
+              console.log('-- no hovering beans, end');
+              logic.state = GameLogic.STATE_INTERACTIVE;
+              logic.drop();
+            }
+          },
+        });
       }
       else {
         console.log('- no groups to remove, end');
-        logic.playerHasControl = true;
+        logic.state = GameLogic.STATE_INTERACTIVE;
         logic.drop();
       }
     },
 
     removeGroup: function removeGroup(group) {
       console.log('removing group %s', group);
-      var logic = this;
+      let logic = this;
       group.forEachBean(function (bean) {
         logic.removeBean(bean);
       });
@@ -615,19 +708,19 @@ const GameLogic = (function () {
     },
 
     dump: function dump() {
-      var output = '    0 1 2 3 4 5\n';
-      var styles = [];
-      var buffer;
-      var stylesBuffer;
-      var isLinePopulated;
-      for (var j = 0; j < GRID_HEIGHT; j++) {
+      let output = '    0 1 2 3 4 5\n';
+      let styles = [];
+      let buffer;
+      let stylesBuffer;
+      let isLinePopulated;
+      for (let j = 0; j < GRID_HEIGHT; j++) {
         buffer = (j < 10 ? ' ' : '') + j + ' ';
         stylesBuffer = [];
         isLinePopulated = false;
 
-        for (var i = 0; i < GRID_WIDTH; i++) {
-          var bean = this.beans[i][j];
-          var symbol = '';
+        for (let i = 0; i < GRID_WIDTH; i++) {
+          let bean = this.beans[i][j];
+          let symbol = '';
           if (bean) {
             isLinePopulated = true;
             symbol = '%c' + bean.color.charAt(0).toUpperCase() + '%c';
@@ -649,39 +742,29 @@ const GameLogic = (function () {
 
     gameOver: function gameOver() {
       console.log('======= Game Over =======');
-      clearInterval(this.mainTimer);
-      this.playerHasControl = false;
+      this.state = GameLogic.STATE_GAME_OVER;
       this.display.canPaint = false;
-      for (var i = GRID_WIDTH; i--; ) {
-        for (var j = GRID_HEIGHT; j--; ) {
-          var bean = this.beans[i][j];
+      for (let i = GRID_WIDTH; i--; ) {
+        for (let j = GRID_HEIGHT; j--; ) {
+          let bean = this.beans[i][j];
           if (bean) this.removeBean(bean);
         }
       }
     }
   };
 
-  GameLogic.create = function createGameLogic(display, server) {
-    var gameLogic = Object.create(GameLogic.proto);
+  GameLogic.create = function createGameLogic() {
+    let gameLogic = Object.create(GameLogic.proto);
     console.log('gameLogic created');
 
-    console.assert(display, 'must pass a display to GameLogic.create');
-    gameLogic.display = display;
-
-    console.assert(server, 'must pass a server to GameLogic.create');
-    gameLogic.server = server;
-
-
-    var beans = [];
-    for (var i = GRID_WIDTH; i--; ) {
+    let beans = [];
+    for (let i = GRID_WIDTH; i--; ) {
       beans[i] = [];
-      for (var j = GRID_HEIGHT; j--; ) {
+      for (let j = GRID_HEIGHT; j--; ) {
         beans[i][j] = null;
       }
     }
     gameLogic.beans = beans;
-
-    gameLogic.start();
 
     return gameLogic;
   };
@@ -692,7 +775,7 @@ const GameLogic = (function () {
 // Score ///////////////////////////////////////////////////////////////
 
 const Score = (function () {
-  var Score = Object.create(null);
+  let Score = Object.create(null);
 
   Object.defineProperties(Score, {
     'CHAIN_POWER_TABLE': {
@@ -709,7 +792,7 @@ const Score = (function () {
 
     upgradeChain: function upgradeChain() {
       this.chain = this.chain + 1 || 0;
-      var powerIndex =
+      let powerIndex =
         Math.min(this.chain, Score.CHAIN_POWER_TABLE.length - 1);
       this.chainPower = Score.CHAIN_POWER_TABLE[powerIndex];
       console.log('chain step = %d -> power = %d',
@@ -718,7 +801,7 @@ const Score = (function () {
   };
 
   Score.create = function createScore() {
-    var score = Object.create(Score.proto);
+    let score = Object.create(Score.proto);
     console.log('score created');
 
     score.upgradeChain();
@@ -731,7 +814,7 @@ const Score = (function () {
 // Arena ///////////////////////////////////////////////////////////////
 
 const Arena = (function () {
-  var Arena = Object.create(null);
+  let Arena = Object.create(null);
 
   Object.defineProperties(Arena, {
     'RATIO': { enumerable: true, value: 960 / 674 },
@@ -741,9 +824,10 @@ const Arena = (function () {
     gameLogic: null,
     server: null,
     display: null,
+    audioPlayer: null,
 
     keydown: function keydown(event) {
-      if (!this.gameLogic.playerHasControl) return;
+      if (this.gameLogic.state !== GameLogic.STATE_INTERACTIVE) return;
       switch (event.keyCode) {
         case 81: // Q
         case 65: // A (Bépo)
@@ -773,25 +857,61 @@ const Arena = (function () {
   };
 
   Arena.create = function createArena($container) {
-    var arena = Object.create(Arena.proto);
+    let arena = Object.create(Arena.proto);
     console.log('arena created (#' + $container.id + ')');
 
-    arena.server = createServer();
+    let server       = Server.create();
+    let timeHandler  = TimeHandler.create();
+    let display      = Display.create();
+    let audioPlayer  = AudioPlayer.create();
+    let assetManager = AssetManager.create();
+
+    arena.server       = server;
+    arena.timeHandler  = timeHandler;
+    arena.display      = display;
+    arena.audioPlayer  = audioPlayer;
+
+    timeHandler.server = server;
+
+    display.assetManager     = assetManager;
+    audioPlayer.assetManager = assetManager;
 
     document.addEventListener(AssetManager.ALL_ASSETS_LOADED_EVENT,
       function listener(event) {
         document.removeEventListener(
           AssetManager.ALL_ASSETS_LOADED_EVENT, listener);
 
-        arena.gameLogic =
-          GameLogic.create(arena.display, arena.server);
+        let gameLogic = GameLogic.create();
+        gameLogic.display     = display;
+        gameLogic.audioPlayer = audioPlayer;
+        gameLogic.server      = server;
+        gameLogic.timeHandler = timeHandler;
+        arena.gameLogic = gameLogic;
+
+        display.setContainer($container);
+
+        timeHandler.addTask({
+          mode: TimeHandler.MODE_PER_FRAME,
+          callback: (time) => {
+            display.drawFrame(time);
+          },
+        });
+
+        timeHandler.addTask({
+          mode: TimeHandler.MODE_INTERVAL,
+          delay: 1000,
+          callback: (time) => {
+            gameLogic.tick(time);
+          },
+        });
+
+        gameLogic.init();
+        timeHandler.start();
 
         document.addEventListener('keydown', function (event) {
           arena.keydown(event);
         }, false);
       });
-
-    arena.display = createDisplay($container);
 
     return arena;
   };
@@ -801,8 +921,10 @@ const Arena = (function () {
 
 // Server //////////////////////////////////////////////////////////////
 
-let createServer = (function () {
-  var serverProto = {
+const Server = (function () {
+  let Server = Object.create(null);
+
+  Server.proto = {
     difficulty: NaN,
 
     setDifficulty: function setDifficulty(difficulty) {
@@ -810,10 +932,12 @@ let createServer = (function () {
     },
 
     requestPair: function requestPair() {
-      var dif = this.difficulty;
-      console.assert(!isNaN(dif), 'difficulty not set at server side');
+      let dif = this.difficulty;
+      if (Number.isNaN(dif)) {
+        throw new Error('difficulty not set at server side');
+      }
 
-      var n = 4 + Number(dif > 1);
+      let n = (dif > 1) ? 5 : 4;
       return Pair.create(
         Bean.create(Bean.COLORS[Math.floor(n * Math.random())]),
         Bean.create(Bean.COLORS[Math.floor(n * Math.random())])
@@ -821,68 +945,110 @@ let createServer = (function () {
     }
   };
 
-  return function createServer() {
-    var server = Object.create(serverProto);
+  Server.create = function createServer() {
+    let server = Object.create(Server.proto);
     console.log('server created');
 
     server.setDifficulty(2); // will not stay as is
 
     return server;
   };
+
+  return Object.freeze(Server);
 }());
 
 // Display /////////////////////////////////////////////////////////////
 
-const DISPLAY_OFFSETS = {};
-DISPLAY_OFFSETS[GameLogic.PLAYER] = {
-  x: GRID_PITCH * 1,
-  y: GRID_PITCH * 1
-};
-DISPLAY_OFFSETS[GameLogic.OPPONENT] = {
-  x: GRID_PITCH * 13,
-  y: GRID_PITCH * 1
-};
+const Display = (function () {
+  let Display = Object.create(null);
 
-let createDisplay = (function () {
-  var displayProto = {
+  let offsets = {};
+  offsets[GameLogic.PLAYER] = Object.freeze({
+    x: GRID_PITCH * 1,
+    y: GRID_PITCH * 1
+  });
+  offsets[GameLogic.OPPONENT] = Object.freeze({
+    x: GRID_PITCH * 13,
+    y: GRID_PITCH * 1
+  });
+
+  Object.defineProperties(Display, {
+    'OFFSETS': { enumerable: true, value: Object.freeze(offsets) },
+  });
+
+  Display.proto = {
     canvases: null,
     assetManager: null,
+    timeHandler: null,
     beans: null,
     canPaint: false,
 
+    setContainer: function setContainer($container) {
+      let $canvas = document.createElement('canvas');
+      let width  = GRID_PITCH * 20;
+      let height = GRID_PITCH * 20 / Arena.RATIO;
+      $canvas.width  = width;
+      $canvas.height = height;
+
+      $container.style.width = width + 'px';
+      $container.style.backgroundSize = width + 'px ' + height + 'px';
+      $container.appendChild($canvas);
+
+      this.canvases = [ $canvas ];
+      this.beans = [];
+
+      this.canPaint = true;
+      this.clip();
+    },
+
     drawFrame: function drawFrame() {
-      if (!this.canPaint) {
-        console.warn('painting will stop');
-        return;
-      }
+      if (!this.canPaint) return;
 
-      var thisDisplay = this;
-      requestAnimationFrame(function () {
-        thisDisplay.drawFrame();
-      });
-
-      var $canvas = this.canvases[0];
-      var drawingContext = $canvas.getContext('2d');
+      let $canvas = this.canvases[0];
+      let drawingContext = $canvas.getContext('2d');
       drawingContext.clearRect(0, 0, $canvas.width, $canvas.height);
 
-      this.beans.forEach(function (bean) {
-        thisDisplay.drawBean(bean);
-      });
+      for (let bean of this.beans) {
+        this.drawBean(bean);
+      }
     },
 
     drawBean: function drawBean(bean) {
-      var asset = this.assetManager.getAsset('beanSprites');
-      var colorOffset = Bean.COLORS.indexOf(bean.color) * asset.spriteY;
-      var bondOffset = bean.bonds * asset.spriteX;
-      var drawingContext = this.canvases[0].getContext('2d');
+      let asset = this.assetManager.getAsset('beanSprites');
+      let colorOffset = Bean.COLORS.indexOf(bean.color) * asset.spriteY;
 
-      drawingContext.drawImage(
-        asset.$img,
-        bondOffset, colorOffset,
-        asset.spriteX, asset.spriteY,
-        bean.displayX, bean.displayY,
-        GRID_PITCH, GRID_PITCH
-      );
+      let stateOffset = NaN;
+      switch (bean.visualState) {
+        case Bean.STATE_STATIC: {
+          stateOffset = bean.bonds * asset.spriteX;
+          break;
+        }
+
+        case Bean.STATE_LEADING:
+        case Bean.STATE_POPPING: {
+          stateOffset = Bean.SPRITE_OFFSETS[bean.visualState] * asset.spriteX;
+          break;
+        }
+
+        case Bean.STATE_INVISIBLE: {
+          break;
+        }
+
+        default: {
+          throw new Error(`unhandled bean state ${bean.visualState}`);
+        }
+      }
+
+      if (bean.visualState !== Bean.STATE_INVISIBLE) {
+        let drawingContext = this.canvases[0].getContext('2d');
+        drawingContext.drawImage(
+          asset.$img,
+          stateOffset, colorOffset,
+          asset.spriteX, asset.spriteY,
+          bean.displayX, bean.displayY,
+          GRID_PITCH, GRID_PITCH
+        );
+      }
     },
 
     registerBean: function registerBean(bean) {
@@ -890,7 +1056,7 @@ let createDisplay = (function () {
     },
 
     unregisterBean: function unregisterBean(bean) {
-      var index = this.beans.indexOf(bean);
+      let index = this.beans.indexOf(bean);
       if (index < 0) {
         throw new Error('bean not registered: ' + bean);
       }
@@ -898,8 +1064,8 @@ let createDisplay = (function () {
     },
 
     clip: function clip() {
-      var $cv = this.canvases[0];
-      var cx = $cv.getContext('2d');
+      let $cv = this.canvases[0];
+      let cx = $cv.getContext('2d');
 
       cx.restore(); // restoring from a previous clipping
       cx.save(); // saving before clipping
@@ -914,39 +1080,140 @@ let createDisplay = (function () {
     }
   };
 
-  return function createDisplay($container) {
-    var display = Object.create(displayProto);
+  Display.create = function createDisplay() {
+    let display = Object.create(Display.proto);
     console.log('display created');
-
-    console.assert($container,
-      'must pass a container to createDisplay');
-
-    var $canvas = document.createElement('canvas');
-    var width  = GRID_PITCH * 20;
-    var height = GRID_PITCH * 20 / Arena.RATIO;
-    $canvas.width  = width;
-    $canvas.height = height;
-
-    $container.style.width = width + 'px';
-    $container.style.backgroundSize = width + 'px ' + height + 'px';
-    $container.appendChild($canvas);
-
-    display.canvases = [ $canvas ];
-    display.beans = [];
-    display.assetManager = AssetManager.create();
-
-    display.canPaint = true;
-    display.clip();
-    display.drawFrame();
-
     return display;
   };
+
+  return Object.freeze(Display);
+}());
+
+// AudioPlayer /////////////////////////////////////////////////////////
+
+const AudioPlayer = (function () {
+  let AudioPlayer = Object.create(null);
+
+  AudioPlayer.proto = {
+    assetManager: null,
+    //audioContext: null,
+    //clipMap: null,
+
+    playClip: function playClip(clipName) {
+      let $audio = this.assetManager.getAsset(clipName).$audio;
+
+      //let source;
+      //if (!this.clipMap.has(clipName)) {
+      //  source = this.audioContext.createMediaElementSource($audio);
+      //  source.connect(this.audioContext.destination);
+      //  this.clipMap.set(clipName, source);
+      //}
+      //else {
+      //  source = this.clipMap.get(clipName);
+      //}
+
+      $audio.currentTime = 0;
+      $audio.play();
+    },
+  };
+
+  AudioPlayer.create = function createAudioPlayer() {
+    let audioPlayer = Object.create(AudioPlayer.proto);
+    console.log('audioPlayer created');
+
+    //audioPlayer.audioContext = new AudioContext();
+    //audioPlayer.clipMap = new Map();
+
+    return audioPlayer;
+  };
+
+  return Object.freeze(AudioPlayer);
+}());
+
+// TimeHandler /////////////////////////////////////////////////////////
+
+const TimeHandler = (function () {
+  let TimeHandler = Object.create(null);
+
+  Object.defineProperties(TimeHandler, {
+    'MODE_TIMEOUT'   : { enumerable: true, value: Symbol('timeout')   },
+    'MODE_INTERVAL'  : { enumerable: true, value: Symbol('interval')  },
+    'MODE_PER_FRAME' : { enumerable: true, value: Symbol('per frame') },
+  });
+
+  TimeHandler.proto = {
+    server: null,
+    periodicTasks: null,
+    oneTimeTasks: null,
+
+    addTask: function addTask(task) {
+      if (!(task && task.mode && task.callback)) {
+        throw new Error('Incorrect call to TimeHandler.addTask' + task);
+      }
+
+      switch (task.mode) {
+        case TimeHandler.MODE_PER_FRAME: {
+          this.periodicTasks.push(task);
+          break;
+        }
+
+        case TimeHandler.MODE_TIMEOUT:
+        case TimeHandler.MODE_INTERVAL: {
+          task.targetTime = performance.now() + task.delay;
+
+          // insert then sort
+          this.oneTimeTasks.push(task);
+          this.oneTimeTasks.sort(
+            (taskA, taskB) => taskA.targetTime - taskB.targetTime
+          );
+          break;
+        }
+
+        default: {
+          throw new Error('Unknown task mode: ', task.mode);
+        }
+      }
+    },
+
+    start: function start() {
+      let thisTimeHandler = this;
+      requestAnimationFrame(function mainLoop(time) {
+        requestAnimationFrame(mainLoop);
+
+        for (let task of thisTimeHandler.periodicTasks) {
+          task.callback(time);
+        }
+
+        let oneTimeTasks = thisTimeHandler.oneTimeTasks;
+        let task;
+        while (oneTimeTasks[0] && oneTimeTasks[0].targetTime <= time) {
+          task = oneTimeTasks.shift();
+          task.callback(time);
+          if (TimeHandler.MODE_INTERVAL === task.mode) {
+            thisTimeHandler.addTask(task);
+          }
+        }
+      });
+    },
+  };
+
+  TimeHandler.create = function createTimeHandler() {
+    console.log('timeHandler created');
+    let timeHandler = Object.create(TimeHandler.proto);
+
+    timeHandler.periodicTasks = [];
+    timeHandler.oneTimeTasks = [];
+
+    return timeHandler;
+  };
+
+  return Object.freeze(TimeHandler);
 }());
 
 // Animation ///////////////////////////////////////////////////////////
 
 const Animation = (function () {
-  var Animation = Object.create(null);
+  let Animation = Object.create(null);
 
   Animation.proto = {
     startTime: NaN,
@@ -956,7 +1223,7 @@ const Animation = (function () {
   };
 
   Animation.create = function createAnimation() {
-    var animation = Object.create(Animation.proto);
+    let animation = Object.create(Animation.proto);
 
 
     return animation;
@@ -968,7 +1235,7 @@ const Animation = (function () {
 // AssetManager ////////////////////////////////////////////////////////
 
 const AssetManager = (function () {
-  var AssetManager = Object.create(null);
+  let AssetManager = Object.create(null);
 
   Object.defineProperties(AssetManager, {
     'MANIFEST_URL': { enumerable: true, value: 'assets.json' },
@@ -1005,8 +1272,8 @@ const AssetManager = (function () {
     },
 
     loadImage: function loadImage(resource) {
-      var thisManager = this;
-      var $img = new Image();
+      let thisManager = this;
+      let $img = new Image();
 
       $img.addEventListener('error', function () {
         thisManager.errorCount++;
@@ -1023,35 +1290,51 @@ const AssetManager = (function () {
     },
 
     loadSpritesheet: function loadSpritesheet(resource) {
-      var thisManager = this;
-      var $img = new Image();
+      let $img = new Image();
 
-      $img.addEventListener('error', function () {
-        thisManager.errorCount++;
-        thisManager.checkCompletion();
+      $img.addEventListener('error', () => {
+        console.warn(`image asset "${resource.name}" failed to load`);
+        this.errorCount++;
+        this.checkCompletion();
       });
 
-      $img.addEventListener('load', function () {
-        thisManager.assets[resource.name] = {
+      $img.addEventListener('load', () => {
+        this.assets[resource.name] = {
           $img: $img,
           spriteX: resource.spriteX,
           spriteY: resource.spriteY
         };
-        thisManager.loadCount++;
-        thisManager.checkCompletion();
+        this.loadCount++;
+        this.checkCompletion();
       });
 
       $img.src = resource.url;
     },
 
     loadAudio: function loadAudio(resource) {
-      // TODO handle audio assets
-      this.loadCount++;
-      this.checkCompletion();
+      let $audio = new Audio();
+      $audio.preload = 'auto';
+
+      $audio.addEventListener('canplay', () => {
+        this.assets[resource.name] = {
+          $audio: $audio,
+        };
+        this.loadCount++;
+        this.checkCompletion();
+      });
+
+      $audio.addEventListener('error', () => {
+        console.warn(`audio asset "${resource.name}" failed to load`);
+        this.errorCount++;
+        this.checkCompletion();
+      });
+
+      $audio.src = resource.url;
     },
 
     checkCompletion: function checkCompletion() {
       if (this.loadCount + this.errorCount === this.assetCount) {
+        console.log(`all assets loaded, ${this.errorCount} error(s)`);
         document.dispatchEvent(
           new CustomEvent(AssetManager.ALL_ASSETS_LOADED_EVENT));
       }
@@ -1066,21 +1349,21 @@ const AssetManager = (function () {
   };
 
   AssetManager.create = function createAssetManager() {
-    var assetManager = Object.create(AssetManager.proto);
+    let assetManager = Object.create(AssetManager.proto);
     console.log('assetManager created');
 
     assetManager.assets = {};
     assetManager.loadCount = 0;
     assetManager.errorCount = 0;
 
-    var req = new XMLHttpRequest();
+    let req = new XMLHttpRequest();
     req.open('GET', AssetManager.MANIFEST_URL);
 
     // prevents Firefox from stupidly assuming the file is xml
     req.overrideMimeType('application/json; charset=utf-8');
 
     req.addEventListener('load', function () {
-      var manifest;
+      let manifest;
       try {
         manifest = JSON.parse(this.responseText);
       } catch (err) {
@@ -1089,9 +1372,9 @@ const AssetManager = (function () {
       if (!manifest) return;
 
       assetManager.assetCount = manifest.length;
-      manifest.forEach(function (resource) {
+      for (let resource of manifest) {
         assetManager.loadResource(resource);
-      });
+      }
     });
     req.send();
 

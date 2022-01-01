@@ -1,0 +1,43 @@
+Frame   Description                 Frame   Description
+-----   -----------                 -----   -----------
+0       reds got glued              0       got glued
+3       score appears               3       score
+5       reds vanish                 5       disappear
+6       reappear    \ 1             
+7       disappear   /               
+8       reappear    \ 2             
+9       disappear   /               
+10      reappear    \ 3             
+11      disappear   /               
+12      reappear    \ 4             
+13      disappear   /               
+14      reappear    \ 5             
+15      disappear   /               
+16      reappear    \ 6             
+17      disappear   /               
+18      reappear    \ 7             
+19      disappear   /               
+20      reappear    \ 8             
+21      disappear   /               
+22      reappear    \ 9             
+23      disappear   /               
+24      reappear    \ 10            
+25      disappear   /               
+26      reappear    \ 11            
+27      disappear   /               
+28      2nd frame last disapp.      28    2nd frame
+29      reds reappear w/ big eyes   29    big eyes
+…                                   …
+36      first particles appear      37    first particles
+…                                   …
+56      score final, new value      41    first bean to shrink
+57      first particles disappear   …
+…                                   43    first bean shrinks more
+69      last particles disappear    44    2nd bean begins to shrink
+                                    45    1st bean shrinks, 3
+                                    46    2nd bean shrinks more
+                                    …
+                                    48    2nd bean shrinks, 3
+
+One thing to note: during a combo, particles have time to disappear entirely,
+and score to display final value, before the next step resolves
