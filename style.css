@@ -26,6 +26,7 @@ h1, h2 {
   background: url("assets/arena640x448.png");
   border: solid 1px black;
   margin: 1em auto;
+  margin-top: 5em;
   position: relative;
 }
 
@@ -70,7 +71,7 @@ a.startButton:hover {
   padding: 1ex;
   background: rgba(0, 0, 0, 0.8);
   border-radius: 1em;
-  width: 62%;
+  width: 30%;
   text-align: center;
 }
 #howto ul {
