@@ -829,28 +829,21 @@ const Arena = (function () {
     keydown: function keydown(event) {
       if (this.gameLogic.state !== GameLogic.STATE_INTERACTIVE) return;
       switch (event.keyCode) {
-        case 81: // Q
-        case 65: // A (Bépo)
+        case 37: // left arrow
           event.preventDefault();
           this.gameLogic.move(LEFT);
           break;
-        case 83: // S
-        case 85: // U (Bépo)
+        case 38: // up arrow
           event.preventDefault();
-          this.gameLogic.move(DOWN);
-          break;
-        case 68: // D
-        case 73: // I (Bépo)
-          event.preventDefault();
-          this.gameLogic.move(RIGHT);
-          break;
-        case 37: // left arrow
-          event.preventDefault();
-          this.gameLogic.rotate(CCW);
+          this.gameLogic.rotate(CW);
           break;
         case 39: // right arrow
           event.preventDefault();
-          this.gameLogic.rotate(CW);
+          this.gameLogic.move(RIGHT);
+          break;
+        case 40: // down arrow
+          event.preventDefault();
+          this.gameLogic.move(DOWN);
           break;
       }
     }

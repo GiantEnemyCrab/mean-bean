@@ -7,10 +7,6 @@ body {
   overflow-y: hidden;
   margin: 0 1em;
   background-color: #000957;
-  background-image:
-    linear-gradient(to bottom, transparent, black),
-    url("robotnick-blue.png");
-  background-position: top center;
   color: white;
   font-family: Consolas, "Lucida Console", "Courier New";
   font-variant: small-caps;
