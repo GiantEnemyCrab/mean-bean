@@ -829,6 +829,10 @@ const Arena = (function () {
     keydown: function keydown(event) {
       if (this.gameLogic.state !== GameLogic.STATE_INTERACTIVE) return;
       switch (event.keyCode) {
+        case 32: // space
+          event.preventDefault();
+          window.alert("Paused: Press Enter or click Ok to resume.");
+          break;
         case 37: // left arrow
           event.preventDefault();
           this.gameLogic.move(LEFT);
